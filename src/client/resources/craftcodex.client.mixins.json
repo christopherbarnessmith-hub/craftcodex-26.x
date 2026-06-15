@@ -1,0 +1,14 @@
+{
+	"required": true,
+	"package": "com.kingxion.craftcodex.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"AbstractContainerScreenAccessor",
+		"AbstractContainerScreenMixin",
+		"ClientPacketListenerMixin",
+		"KeyboardHandlerMixin",
+		"MinecraftMixin",
+		"ScreenMixin"
+	],
+	"injectors": {"defaultRequire": 1}
+}
