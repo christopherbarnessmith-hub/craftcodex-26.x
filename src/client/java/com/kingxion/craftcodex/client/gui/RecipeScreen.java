@@ -5,22 +5,35 @@ import com.kingxion.craftcodex.client.recipe.RecipeLookup;
 import com.kingxion.craftcodex.client.recipe.ResolvedRecipe;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.Ingredient;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class RecipeScreen extends Screen {
     private static final int PANEL_W = 176;
-    private static final int PANEL_H = 220;
+    private static final int PANEL_H = 166;
     private static final int SLOT    = 18;
     private static final int PADDING = 8;
+    private static final int BUTTON  = 14;
+    private static final int TAB_W   = 22;
+    private static final int TAB_H   = 24;
+    private static final int HEADER_H = 30;
+    private static final int RECIPES_PER_PAGE = 1;
 
     private final ItemStack subject;
     private final Screen    parent;
     private final boolean   usages;
+    private List<ResolvedRecipe> allRecipes;
     private List<ResolvedRecipe> recipes;
+    private List<RecipeCategory> categories;
+    private RecipeCategory selectedCategory;
     private int page = 0;
     private int panelX, panelY;
 
@@ -36,118 +49,333 @@ public class RecipeScreen extends Screen {
         super.init();
         panelX  = (this.width  - PANEL_W) / 2;
         panelY  = (this.height - PANEL_H) / 2;
-        recipes = usages ? RecipeLookup.getUsagesFor(subject)
+        allRecipes = usages ? RecipeLookup.getUsagesFor(subject)
                 : RecipeLookup.getRecipesFor(subject);
+        categories = categoriesFor(allRecipes);
+        selectedCategory = categories.isEmpty() ? null : categories.getFirst();
+        applyCategoryFilter();
         page = 0;
     }
 
     @Override
-    public void render(GuiGraphicsExtractor g, int mx, int my, float delta) {
-        super.render(g, mx, my, delta);
-        renderBackground(g, mx, my, delta);
+    public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float delta) {
+        super.extractRenderState(g, mx, my, delta);
 
-        g.fill(panelX, panelY, panelX + PANEL_W, panelY + PANEL_H, 0xEE1A1A1A);
-        g.renderOutline(panelX, panelY, PANEL_W, PANEL_H, 0xFF444444);
-
-        int cx = panelX + PANEL_W / 2;
-        int y  = panelY + PADDING;
-
-        g.renderItem(subject, panelX + PADDING, y);
-        g.drawString(font, (usages ? "Usages: " : "Recipes: ")
-                        + subject.getHoverName().getString(),
-                panelX + PADDING + 20, y + 4, 0xFFFFFF);
-        y += 24;
+        drawJeiPanel(g);
 
         if (recipes.isEmpty()) {
-            g.drawCenteredString(font, usages ? "No usages found." : "No recipes found.",
-                    cx, y, 0xAAAAAA);
-            g.drawCenteredString(font, "\u00a77[Esc] Close",
-                    cx, panelY + PANEL_H - 14, 0xAAAAAA);
+            drawText(g, usages ? "No usages found." : "No recipes found.",
+                    panelX + 48, panelY + PANEL_H / 2 - 4, 0xFF404040);
             return;
         }
 
-        ResolvedRecipe recipe = recipes.get(page);
-        g.drawCenteredString(font, recipe.category().getDisplayName(), cx, y, 0xAAAAAA);
-        y += 10;
+        int pages = pageCount();
+        int start = page * RECIPES_PER_PAGE;
+        ResolvedRecipe firstRecipe = recipes.get(start);
 
-        if (recipes.size() > 1) {
-            g.drawString(font, "\u25c4", panelX + PADDING, y,
-                    page > 0 ? 0xFFFFFF : 0x555555);
-            g.drawCenteredString(font, (page + 1) + " / " + recipes.size(), cx, y, 0xCCCCCC);
-            g.drawString(font, "\u25ba",
-                    panelX + PANEL_W - PADDING - font.width("\u25ba"), y,
-                    page < recipes.size() - 1 ? 0xFFFFFF : 0x555555);
+        drawPageButton(g, panelX + PADDING, panelY + PADDING, page > 0, false);
+        drawPageButton(g, panelX + PANEL_W - PADDING - BUTTON, panelY + PADDING, page < pages - 1, true);
+        drawText(g, cleanCategoryName(firstRecipe), panelX + 28, panelY + 8, 0xFF404040);
+        drawText(g, (page + 1) + "/" + pages,
+                panelX + PANEL_W - PADDING - BUTTON - font.width((page + 1) + "/" + pages) - 6,
+                panelY + 8, 0xFF404040);
+        drawCategoryTabs(g, mx, my);
+
+        int recipeY = panelY + HEADER_H + (categories.isEmpty() ? 12 : 18);
+        for (int i = 0; i < RECIPES_PER_PAGE; i++) {
+            int recipeIndex = start + i;
+            if (recipeIndex >= recipes.size()) break;
+            drawRecipe(g, recipes.get(recipeIndex), recipeY, mx, my);
         }
-        y += 14;
-
-        y = drawGrid(g, recipe, panelX + PADDING, y);
-        y += 8;
-        g.drawCenteredString(font, "\u25bc", cx, y, 0xFFFFFF);
-        y += 12;
-
-        int outX = cx - SLOT / 2;
-        g.fill(outX - 1, y - 1, outX + SLOT + 1, y + SLOT + 1, 0xFF333333);
-        g.renderItem(recipe.output(), outX, y);
-        g.renderItemDecorations(font, recipe.output(), outX, y);
-        if (mx >= outX && mx <= outX + SLOT && my >= y && my <= y + SLOT)
-            g.renderTooltip(font, recipe.output(), mx, my);
-
-        g.drawCenteredString(font, "\u00a77[\u2190\u2192] Page  [Esc] Close",
-                cx, panelY + PANEL_H - 14, 0xAAAAAA);
     }
 
-    private int drawGrid(GuiGraphicsExtractor g, ResolvedRecipe recipe, int sx, int sy) {
+    private void drawPageButton(GuiGraphicsExtractor g, int x, int y, boolean enabled, boolean right) {
+        g.fill(x, y, x + BUTTON, y + BUTTON, enabled ? 0xFFD7D7D7 : 0xFFE6E6E6);
+        g.fill(x, y, x + BUTTON, y + 1, 0xFFFFFFFF);
+        g.fill(x, y, x + 1, y + BUTTON, 0xFFFFFFFF);
+        g.fill(x + BUTTON - 1, y, x + BUTTON, y + BUTTON, 0xFF777777);
+        g.fill(x, y + BUTTON - 1, x + BUTTON, y + BUTTON, 0xFF777777);
+        drawText(g, right ? ">" : "<", x + 5, y + 3, enabled ? 0xFF404040 : 0xFFA0A0A0);
+    }
+
+    private void drawCategoryTabs(GuiGraphicsExtractor g, int mx, int my) {
+        if (categories.isEmpty()) return;
+        int x = panelX + PADDING;
+        int y = panelY - TAB_H + 1;
+        for (int i = 0; i < categories.size() && i < 9; i++) {
+            RecipeCategory category = categories.get(i);
+            int tx = x + i * (TAB_W - 1);
+            boolean selected = category == selectedCategory;
+            int tabBottom = y + TAB_H + (selected ? 2 : 0);
+            g.fill(tx, y, tx + TAB_W, tabBottom, selected ? 0xFFE9E9E9 : 0xFFCFCFCF);
+            g.fill(tx, y, tx + TAB_W, y + 1, 0xFFFFFFFF);
+            g.fill(tx, y, tx + 1, tabBottom, 0xFFFFFFFF);
+            g.fill(tx + TAB_W - 1, y, tx + TAB_W, tabBottom, 0xFF555555);
+            if (!selected) g.fill(tx, tabBottom - 1, tx + TAB_W, tabBottom, 0xFF555555);
+            g.item(categoryIcon(category), tx + 3, y + 4);
+            if (mx >= tx && mx < tx + TAB_W && my >= y && my < tabBottom)
+                g.setTooltipForNextFrame(font, Component.literal(category.getDisplayName()), mx, my);
+        }
+    }
+
+    private void drawRecipe(GuiGraphicsExtractor g, ResolvedRecipe recipe, int y, int mx, int my) {
+        int gridX = panelX + 36;
+        int outputX = panelX + 121;
+        int outputY = y + 18;
+
+        drawGrid(g, recipe, gridX, y, mx, my);
+
+        int arrowX = panelX + 94;
+        int arrowY = y + 21;
+        g.fill(arrowX, arrowY + 6, arrowX + 20, arrowY + 12, 0xFF9E9E9E);
+        drawText(g, ">", arrowX + 18, arrowY + 5, 0xFF9E9E9E);
+
+        drawSlot(g, outputX, outputY);
+        g.item(recipe.output(), outputX + 1, outputY + 1);
+        g.itemDecorations(font, recipe.output(), outputX + 1, outputY + 1);
+        if (isMouseOverSlot(mx, my, outputX, outputY))
+            g.setTooltipForNextFrame(font, recipe.output(), mx, my);
+    }
+
+    private void drawGrid(GuiGraphicsExtractor g, ResolvedRecipe recipe, int sx, int sy, int mx, int my) {
         List<Ingredient> ings = recipe.ingredients();
         boolean crafting = recipe.category() == RecipeCategory.CRAFTING
-                || recipe.category() == RecipeCategory.CRAFTING_SHAPELESS;
+                || recipe.category() == RecipeCategory.CRAFTING_SHAPELESS
+                || recipe.category() == RecipeCategory.MECHANICAL_CRAFTING
+                || ings.size() > 1;
         if (crafting) {
-            int w = recipe.gridWidth(), h = recipe.gridHeight();
-            for (int row = 0; row < h; row++) {
-                for (int col = 0; col < w; col++) {
+            int w = Math.min(3, Math.max(1, recipe.gridWidth()));
+            int h = Math.min(3, Math.max(1, recipe.gridHeight()));
+            for (int row = 0; row < 3; row++) {
+                for (int col = 0; col < 3; col++) {
                     int i = row * w + col;
                     int x = sx + col * SLOT, y = sy + row * SLOT;
-                    g.fill(x, y, x + SLOT - 1, y + SLOT - 1, 0xFF2A2A2A);
-                    if (i < ings.size() && !ings.get(i).isEmpty()) {
-                        ItemStack[] stacks = ings.get(i).getItems();
-                        if (stacks.length > 0) {
-                            int tick = (int)(System.currentTimeMillis() / 1000) % stacks.length;
-                            g.renderItem(stacks[tick], x + 1, y + 1);
+                    drawSlot(g, x, y);
+                    if (row < h && col < w && i < ings.size() && !ings.get(i).isEmpty()) {
+                        List<ItemStack> stacks = stacksFor(ings.get(i));
+                        if (!stacks.isEmpty()) {
+                            ItemStack stack = cycledStack(stacks);
+                            g.item(stack, x + 1, y + 1);
+                            if (isMouseOverSlot(mx, my, x, y))
+                                g.setTooltipForNextFrame(font, stack, mx, my);
                         }
                     }
                 }
             }
-            return sy + h * SLOT;
         } else {
+            int x = sx + SLOT;
+            int y = sy + SLOT;
+            drawSlot(g, x, y);
             if (!ings.isEmpty()) {
-                ItemStack[] stacks = ings.get(0).getItems();
-                if (stacks.length > 0) {
-                    int tick = (int)(System.currentTimeMillis() / 1000) % stacks.length;
-                    g.fill(sx, sy, sx + SLOT - 1, sy + SLOT - 1, 0xFF2A2A2A);
-                    g.renderItem(stacks[tick], sx + 1, sy + 1);
+                List<ItemStack> stacks = stacksFor(ings.get(0));
+                if (!stacks.isEmpty()) {
+                    ItemStack stack = cycledStack(stacks);
+                    g.item(stack, x + 1, y + 1);
+                    if (isMouseOverSlot(mx, my, x, y))
+                        g.setTooltipForNextFrame(font, stack, mx, my);
                 }
             }
-            return sy + SLOT;
         }
     }
 
-    @Override
-    public boolean keyPressed(int key, int scan, int mods) {
-        if (key == 263 && page > 0)                  { page--; return true; }
-        if (key == 262 && page < recipes.size() - 1) { page++; return true; }
-        if (key == 256) { minecraft.setScreen(parent); return true; }
-        return super.keyPressed(key, scan, mods);
+    private void drawSlot(GuiGraphicsExtractor g, int x, int y) {
+        g.fill(x, y, x + SLOT, y + SLOT, 0xFF8B8B8B);
+        g.fill(x + 1, y + 1, x + SLOT, y + 2, 0xFFEFEFEF);
+        g.fill(x + 1, y + 1, x + 2, y + SLOT, 0xFFEFEFEF);
+        g.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0xFFA8A8A8);
+        g.fill(x + SLOT - 1, y + 1, x + SLOT, y + SLOT, 0xFFFFFFFF);
+        g.fill(x + 1, y + SLOT - 1, x + SLOT, y + SLOT, 0xFFFFFFFF);
+    }
+
+    private void drawJeiPanel(GuiGraphicsExtractor g) {
+        g.fill(panelX, panelY, panelX + PANEL_W, panelY + PANEL_H, 0xFFE9E9E9);
+        g.fill(panelX, panelY, panelX + PANEL_W, panelY + 1, 0xFFFFFFFF);
+        g.fill(panelX, panelY, panelX + 1, panelY + PANEL_H, 0xFFFFFFFF);
+        g.fill(panelX + PANEL_W - 1, panelY, panelX + PANEL_W, panelY + PANEL_H, 0xFF555555);
+        g.fill(panelX, panelY + PANEL_H - 1, panelX + PANEL_W, panelY + PANEL_H, 0xFF555555);
+        g.fill(panelX + 2, panelY + 2, panelX + PANEL_W - 2, panelY + PANEL_H - 2, 0xFFE1E1E1);
+    }
+
+    private static boolean isMouseOverSlot(int mx, int my, int x, int y) {
+        return mx >= x && mx < x + SLOT && my >= y && my < y + SLOT;
     }
 
     @Override
-    public boolean mouseClicked(double mx, double my, int btn) {
-        int arrowY = panelY + PADDING + 24 + 10;
-        if (mx >= panelX + PADDING && mx <= panelX + PADDING + 10
-                && my >= arrowY && my <= arrowY + 10 && page > 0) { page--; return true; }
-        int rx = panelX + PANEL_W - PADDING - font.width("\u25ba");
-        if (mx >= rx && mx <= rx + 10
-                && my >= arrowY && my <= arrowY + 10
-                && page < recipes.size() - 1) { page++; return true; }
-        return super.mouseClicked(mx, my, btn);
+    public boolean keyPressed(KeyEvent event) {
+        int key = event.key();
+        if (key == 263 && page > 0)                  { page--; return true; }
+        if (key == 262 && page < pageCount() - 1)    { page++; return true; }
+        if (key == 256) { minecraft.setScreen(parent); return true; }
+        return super.keyPressed(event);
+    }
+
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mx = event.x();
+        double my = event.y();
+        int leftX = panelX + PADDING;
+        int rightX = panelX + PANEL_W - PADDING - BUTTON;
+        int arrowY = panelY + PADDING;
+        if (mx >= leftX && mx < leftX + BUTTON && my >= arrowY && my < arrowY + BUTTON && page > 0) {
+            page--;
+            return true;
+        }
+        if (mx >= rightX && mx < rightX + BUTTON && my >= arrowY && my < arrowY + BUTTON
+                && page < pageCount() - 1) {
+            page++;
+            return true;
+        }
+        if (clickCategoryTab(mx, my)) return true;
+
+        ItemStack clicked = getClickedRecipeStack((int) mx, (int) my);
+        if (!clicked.isEmpty()) {
+            minecraft.setScreen(new RecipeScreen(clicked.copy(), this, event.button() != 0));
+            return true;
+        }
+
+        return super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean charTyped(CharacterEvent event) {
+        return true;
+    }
+
+    private static List<ItemStack> stacksFor(Ingredient ingredient) {
+        return ingredient.items()
+                .map(ItemStack::new)
+                .filter(stack -> !stack.isEmpty())
+                .toList();
+    }
+
+    private static ItemStack cycledStack(List<ItemStack> stacks) {
+        int tick = (int)(System.currentTimeMillis() / 1000) % stacks.size();
+        return stacks.get(tick);
+    }
+
+    private ItemStack getClickedRecipeStack(int mx, int my) {
+        if (recipes.isEmpty()) return ItemStack.EMPTY;
+
+        int recipeIndex = page * RECIPES_PER_PAGE;
+        if (recipeIndex >= recipes.size()) return ItemStack.EMPTY;
+
+        ResolvedRecipe recipe = recipes.get(recipeIndex);
+        int gridX = panelX + 36;
+        int recipeY = panelY + HEADER_H + (categories.isEmpty() ? 12 : 18);
+        int outputX = panelX + 121;
+        int outputY = recipeY + 18;
+
+        if (isMouseOverSlot(mx, my, outputX, outputY)) {
+            return recipe.output();
+        }
+
+        return getClickedIngredient(recipe, gridX, recipeY, mx, my);
+    }
+
+    private ItemStack getClickedIngredient(ResolvedRecipe recipe, int sx, int sy, int mx, int my) {
+        List<Ingredient> ingredients = recipe.ingredients();
+        boolean gridRecipe = recipe.category() == RecipeCategory.CRAFTING
+                || recipe.category() == RecipeCategory.CRAFTING_SHAPELESS
+                || recipe.category() == RecipeCategory.MECHANICAL_CRAFTING
+                || ingredients.size() > 1;
+
+        if (gridRecipe) {
+            int w = Math.min(3, Math.max(1, recipe.gridWidth()));
+            int h = Math.min(3, Math.max(1, recipe.gridHeight()));
+            for (int row = 0; row < 3; row++) {
+                for (int col = 0; col < 3; col++) {
+                    int x = sx + col * SLOT;
+                    int y = sy + row * SLOT;
+                    int i = row * w + col;
+                    if (row < h && col < w && i < ingredients.size() && isMouseOverSlot(mx, my, x, y)) {
+                        return stackForIngredient(ingredients.get(i));
+                    }
+                }
+            }
+            return ItemStack.EMPTY;
+        }
+
+        int x = sx + SLOT;
+        int y = sy + SLOT;
+        if (isMouseOverSlot(mx, my, x, y) && !ingredients.isEmpty()) {
+            return stackForIngredient(ingredients.getFirst());
+        }
+        return ItemStack.EMPTY;
+    }
+
+    private static ItemStack stackForIngredient(Ingredient ingredient) {
+        if (ingredient.isEmpty()) return ItemStack.EMPTY;
+        List<ItemStack> stacks = stacksFor(ingredient);
+        return stacks.isEmpty() ? ItemStack.EMPTY : cycledStack(stacks);
+    }
+
+    private void drawText(GuiGraphicsExtractor g, String text, int x, int y, int color) {
+        g.text(font, text, x, y, color, false);
+    }
+
+    private boolean clickCategoryTab(double mx, double my) {
+        if (categories.isEmpty()) return false;
+        int x = panelX + PADDING;
+        int y = panelY - TAB_H + 1;
+        for (int i = 0; i < categories.size() && i < 9; i++) {
+            int tx = x + i * (TAB_W - 1);
+            if (mx >= tx && mx < tx + TAB_W && my >= y && my < y + TAB_H + 2) {
+                selectedCategory = categories.get(i);
+                applyCategoryFilter();
+                page = 0;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void applyCategoryFilter() {
+        if (selectedCategory == null) {
+            recipes = allRecipes;
+            return;
+        }
+        recipes = allRecipes.stream()
+                .filter(recipe -> recipe.category() == selectedCategory)
+                .toList();
+    }
+
+    private static List<RecipeCategory> categoriesFor(List<ResolvedRecipe> recipes) {
+        List<RecipeCategory> result = new ArrayList<>();
+        for (ResolvedRecipe recipe : recipes) {
+            if (!result.contains(recipe.category())) result.add(recipe.category());
+        }
+        return result;
+    }
+
+    private static String cleanCategoryName(ResolvedRecipe recipe) {
+        if (recipe.category() == RecipeCategory.CRAFTING_SHAPELESS) return "Crafting";
+        return recipe.category().getDisplayName();
+    }
+
+    private static ItemStack categoryIcon(RecipeCategory category) {
+        return switch (category) {
+            case CRAFTING, CRAFTING_SHAPELESS -> new ItemStack(Items.CRAFTING_TABLE);
+            case SMELTING -> new ItemStack(Items.FURNACE);
+            case BLASTING -> new ItemStack(Items.BLAST_FURNACE);
+            case SMOKING -> new ItemStack(Items.SMOKER);
+            case CAMPFIRE -> new ItemStack(Items.CAMPFIRE);
+            case STONECUTTING -> new ItemStack(Items.STONECUTTER);
+            case SMITHING -> new ItemStack(Items.SMITHING_TABLE);
+            case CRUSHING, MILLING -> new ItemStack(Items.GRINDSTONE);
+            case PRESSING, COMPACTING -> new ItemStack(Items.ANVIL);
+            case MIXING -> new ItemStack(Items.CAULDRON);
+            case DEPLOYING, SEQUENCED_ASSEMBLY, MECHANICAL_CRAFTING -> new ItemStack(Items.PISTON);
+            case SAWING -> new ItemStack(Items.STONECUTTER);
+            case SPLASHING, FILLING -> new ItemStack(Items.WATER_BUCKET);
+            case HAUNTING -> new ItemStack(Items.SOUL_CAMPFIRE);
+            case EMPTYING -> new ItemStack(Items.BUCKET);
+            case POLISHING -> new ItemStack(Items.SANDSTONE);
+            default -> new ItemStack(Items.HOPPER);
+        };
+    }
+
+    private int pageCount() {
+        return Math.max(1, (recipes.size() + RECIPES_PER_PAGE - 1) / RECIPES_PER_PAGE);
     }
 
     @Override public boolean isPauseScreen() { return false; }

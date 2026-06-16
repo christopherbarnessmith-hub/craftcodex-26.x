@@ -2,17 +2,17 @@ package com.kingxion.craftcodex.client;
 
 import com.kingxion.craftcodex.client.gui.CraftCodexOverlay;
 import com.kingxion.craftcodex.client.input.KeyBindings;
+import com.kingxion.craftcodex.client.config.CraftCodexConfig;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
-import net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 
 public class CraftCodexClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
+		CraftCodexConfig.load();
 		KeyBindings.register();
-		CraftCodexOverlay.init();
+		CraftCodexOverlay.configure();
 
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (mc.screen instanceof AbstractContainerScreen<?> screen) {
@@ -25,12 +25,5 @@ public class CraftCodexClient implements ClientModInitializer {
 			}
 		});
 
-		ScreenEvents.AFTER_INIT.register((mc, screen, w, h) -> {
-			if (screen instanceof AbstractContainerScreen<?>) {
-				ScreenKeyboardEvents.allowKeyPress(screen).register((s, key, scan, mods) ->
-						!CraftCodexOverlay.onKeyPress(s, key)
-				);
-			}
-		});
 	}
 }

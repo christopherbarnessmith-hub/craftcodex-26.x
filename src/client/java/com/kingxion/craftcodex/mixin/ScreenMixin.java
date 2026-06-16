@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class ScreenMixin {
     @Inject(
             method = "extractRenderStateWithTooltipAndSubtitles(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V",
-            at = @At("HEAD")
+            at = @At("TAIL")
     )
     private void onRender(GuiGraphicsExtractor g, int mx, int my, float delta, CallbackInfo ci) {
         Screen screen = (Screen)(Object) this;
